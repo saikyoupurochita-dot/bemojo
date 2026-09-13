@@ -186,66 +186,55 @@ final class PojavControlOverlay extends ViewGroup {
     /**
      * Pojav-style button "swipe" linking: once a finger presses a swipeable button, dragging
      * it (without lifting) across another swipeable button presses that one too, releasing the
-     * first. We only need to steal the gesture from the child once the finger has actually left
-     * the button it started on, so DOWN/POINTER_DOWN events always pass through untouched and
-     * normal per-button presses keep working exactly as before.
+     * first. This is handled here, in {@link #dispatchTouchEvent}, rather than via
+     * {@link #onInterceptTouchEvent}: intercepting a gesture cancels *every* active touch target
+     * on this ViewGroup, not just the pointer being intercepted, which used to freeze the
+     * joystick and the camera/look surface any time a finger merely swiped between two buttons.
+     * Instead we peek at the stream and update button press-state/key-state as a side effect,
+     * then always let {@code super.dispatchTouchEvent} continue the normal, per-pointer split
+     * dispatch so the joystick, the camera surface and the buttons themselves are never touched
+     * by this logic unless their own pointer is actually involved.
      */
     @Override
-    public boolean onInterceptTouchEvent(MotionEvent ev) {
-        if (ev.getActionMasked() == MotionEvent.ACTION_DOWN && !swipeOwners.isEmpty()) {
+    public boolean dispatchTouchEvent(MotionEvent ev) {
+        int action = ev.getActionMasked();
+
+        if (action == MotionEvent.ACTION_DOWN && !swipeOwners.isEmpty()) {
             // A brand new gesture is starting (first finger down): nothing should still be
             // tracked from a previous one. Defensive sweep in case a mapping was ever left
             // behind by a cancel that wasn't part of a swipe hand-off.
-            swipeOwners.clear();
-        }
-        if (swipeOwners.isEmpty() || ev.getActionMasked() != MotionEvent.ACTION_MOVE) return false;
-        for (int i = 0; i < ev.getPointerCount(); i++) {
-            RuntimeButton owner = swipeOwners.get(ev.getPointerId(i));
-            if (owner == null && !swipeOwners.containsKey(ev.getPointerId(i))) continue;
-            if (findSwipeableButtonAt(ev.getX(i), ev.getY(i)) != owner) return true;
-        }
-        return false;
-    }
-
-    /**
-     * Handles the remainder of a gesture once {@link #onInterceptTouchEvent} has taken it over.
-     * The button that originally owned the intercepted pointer already received ACTION_CANCEL
-     * from the framework (and released itself via its own touch handling); from here on we
-     * manually hit-test every tracked pointer against all swipeable buttons on each move so a
-     * finger can slide across several buttons in one continuous stroke.
-     */
-    @Override
-    public boolean onTouchEvent(MotionEvent ev) {
-        if (swipeOwners.isEmpty()) return false;
-        int action = ev.getActionMasked();
-        if (action == MotionEvent.ACTION_MOVE) {
-            for (int i = 0; i < ev.getPointerCount(); i++) {
-                int pointerId = ev.getPointerId(i);
-                if (!swipeOwners.containsKey(pointerId)) continue;
-                RuntimeButton current = swipeOwners.get(pointerId);
-                RuntimeButton hit = findSwipeableButtonAt(ev.getX(i), ev.getY(i));
-                if (hit != current) {
-                    if (current != null) current.setSwipeLinkedPressed(false);
-                    if (hit != null) hit.setSwipeLinkedPressed(true);
-                    swipeOwners.put(pointerId, hit);
-                }
-            }
-            return true;
-        }
-        if (action == MotionEvent.ACTION_POINTER_UP) {
-            int pointerId = ev.getPointerId(ev.getActionIndex());
-            RuntimeButton owner = swipeOwners.remove(pointerId);
-            if (owner != null) owner.setSwipeLinkedPressed(false);
-            return true;
-        }
-        if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
             for (RuntimeButton owner : swipeOwners.values()) {
                 if (owner != null) owner.setSwipeLinkedPressed(false);
             }
             swipeOwners.clear();
-            return true;
         }
-        return true;
+
+        if (!swipeOwners.isEmpty()) {
+            if (action == MotionEvent.ACTION_MOVE) {
+                for (int i = 0; i < ev.getPointerCount(); i++) {
+                    int pointerId = ev.getPointerId(i);
+                    if (!swipeOwners.containsKey(pointerId)) continue;
+                    RuntimeButton current = swipeOwners.get(pointerId);
+                    RuntimeButton hit = findSwipeableButtonAt(ev.getX(i), ev.getY(i));
+                    if (hit != current) {
+                        if (current != null) current.setSwipeLinkedPressed(false);
+                        if (hit != null) hit.setSwipeLinkedPressed(true);
+                        swipeOwners.put(pointerId, hit);
+                    }
+                }
+            } else if (action == MotionEvent.ACTION_POINTER_UP) {
+                int pointerId = ev.getPointerId(ev.getActionIndex());
+                RuntimeButton owner = swipeOwners.remove(pointerId);
+                if (owner != null) owner.setSwipeLinkedPressed(false);
+            } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                for (RuntimeButton owner : swipeOwners.values()) {
+                    if (owner != null) owner.setSwipeLinkedPressed(false);
+                }
+                swipeOwners.clear();
+            }
+        }
+
+        return super.dispatchTouchEvent(ev);
     }
 
     /** pointerId -> the swipeable button it just pressed; called from RuntimeButton on ACTION_DOWN. */
@@ -685,13 +674,12 @@ final class PojavControlOverlay extends ViewGroup {
                 if (!data.isToggle || virtualMouseButton) press(false);
                 outside = false;
                 rawPassThrough = false;
-                // Deliberately NOT calling overlay.onSwipeButtonRelease() here: a CANCEL on this
-                // button is exactly what happens the instant the overlay intercepts the gesture
-                // to hand it to another button (see PojavControlOverlay#onInterceptTouchEvent),
-                // and clearing the pointer mapping here would erase the hand-off the overlay is
-                // about to perform for this very event. Any genuinely abandoned mapping (a CANCEL
-                // that isn't part of a swipe hand-off) is swept up defensively on the next
-                // ACTION_DOWN in PojavControlOverlay#onInterceptTouchEvent.
+                // Deliberately NOT calling overlay.onSwipeButtonRelease() here: a genuine
+                // CANCEL means the whole gesture ended abnormally, and the overlay's own
+                // dispatchTouchEvent already clears every tracked pointer (and unpresses the
+                // currently swiped-to button, if any) for ACTION_CANCEL/ACTION_UP before this
+                // callback ever runs. Any mapping this misses is swept up defensively on the
+                // next ACTION_DOWN in PojavControlOverlay#dispatchTouchEvent.
                 return true;
             }
             return true;
