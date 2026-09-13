@@ -6,6 +6,9 @@ import java.util.Arrays;
 
 @Keep
 public class ControlData {
+    /** Maximum number of simultaneous actions (keycodes/special actions) a single button can trigger. */
+    public static final int MAX_ACTIONS = 4;
+
     public static final int SPECIALBTN_KEYBOARD = -1;
     public static final int SPECIALBTN_TOGGLECTRL = -2;
     public static final int SPECIALBTN_MOUSEPRI = -3;
@@ -88,13 +91,20 @@ public class ControlData {
         cornerRadius = Math.max(0f, Math.min(cornerRadius, 100f));
     }
 
+    /**
+     * Normalizes keycodes to a fixed-size slot array of {@link #MAX_ACTIONS} entries.
+     * Unlike the original single-action behaviour, this keeps up to {@link #MAX_ACTIONS}
+     * distinct non-unknown codes (in the order supplied) so one button can fire several
+     * actions at once (e.g. right-click + C), padding unused slots with GLFW_KEY_UNKNOWN.
+     */
     private static int[] inflateKeycodes(int[] source) {
-        int[] result = new int[]{KeyMapper.GLFW_KEY_UNKNOWN};
+        int[] result = new int[MAX_ACTIONS];
+        Arrays.fill(result, KeyMapper.GLFW_KEY_UNKNOWN);
         if (source != null) {
+            int index = 0;
             for (int code : source) {
-                if (code != KeyMapper.GLFW_KEY_UNKNOWN) {
-                    result[0] = code;
-                    break;
+                if (code != KeyMapper.GLFW_KEY_UNKNOWN && index < MAX_ACTIONS) {
+                    result[index++] = code;
                 }
             }
         }
@@ -104,6 +114,15 @@ public class ControlData {
     public int primaryKeycode() {
         return keycodes == null || keycodes.length == 0
                 ? KeyMapper.GLFW_KEY_UNKNOWN : keycodes[0];
+    }
+
+    /** True if this button has at least one action slot mapped (beyond the primary one). */
+    public boolean hasSecondaryActions() {
+        if (keycodes == null) return false;
+        for (int i = 1; i < keycodes.length; i++) {
+            if (keycodes[i] != KeyMapper.GLFW_KEY_UNKNOWN) return true;
+        }
+        return false;
     }
 
     @Override

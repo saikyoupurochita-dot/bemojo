@@ -41,6 +41,14 @@ final class PojavControlOverlay extends ViewGroup {
     private boolean virtualTouchDown;
     private long virtualTouchDownAt;
     private boolean receiverRegistered;
+    /**
+     * Tracks, per active pointer id, which swipeable button currently "owns" that finger.
+     * A present key with a null value means the pointer is swiping in the gap between
+     * swipeable buttons (not currently over any of them). Populated when a swipeable
+     * button is first pressed, driven from here on by {@link #onInterceptTouchEvent} /
+     * {@link #onTouchEvent} once the finger crosses into another button's bounds.
+     */
+    private final Map<Integer, RuntimeButton> swipeOwners = new HashMap<>();
 
     private final BroadcastReceiver profileReceiver = new BroadcastReceiver() {
         @Override
@@ -93,6 +101,7 @@ final class PojavControlOverlay extends ViewGroup {
         for (RuntimeJoystick joystick : joysticks) joystick.release();
         runtimeSurface.release();
         releaseVirtualTouch();
+        swipeOwners.clear();
     }
 
     void dispose() {
@@ -172,6 +181,92 @@ final class PojavControlOverlay extends ViewGroup {
         updateVisibility();
         super.dispatchDraw(canvas);
         postInvalidateDelayed(250);
+    }
+
+    /**
+     * Pojav-style button "swipe" linking: once a finger presses a swipeable button, dragging
+     * it (without lifting) across another swipeable button presses that one too, releasing the
+     * first. We only need to steal the gesture from the child once the finger has actually left
+     * the button it started on, so DOWN/POINTER_DOWN events always pass through untouched and
+     * normal per-button presses keep working exactly as before.
+     */
+    @Override
+    public boolean onInterceptTouchEvent(MotionEvent ev) {
+        if (ev.getActionMasked() == MotionEvent.ACTION_DOWN && !swipeOwners.isEmpty()) {
+            // A brand new gesture is starting (first finger down): nothing should still be
+            // tracked from a previous one. Defensive sweep in case a mapping was ever left
+            // behind by a cancel that wasn't part of a swipe hand-off.
+            swipeOwners.clear();
+        }
+        if (swipeOwners.isEmpty() || ev.getActionMasked() != MotionEvent.ACTION_MOVE) return false;
+        for (int i = 0; i < ev.getPointerCount(); i++) {
+            RuntimeButton owner = swipeOwners.get(ev.getPointerId(i));
+            if (owner == null && !swipeOwners.containsKey(ev.getPointerId(i))) continue;
+            if (findSwipeableButtonAt(ev.getX(i), ev.getY(i)) != owner) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Handles the remainder of a gesture once {@link #onInterceptTouchEvent} has taken it over.
+     * The button that originally owned the intercepted pointer already received ACTION_CANCEL
+     * from the framework (and released itself via its own touch handling); from here on we
+     * manually hit-test every tracked pointer against all swipeable buttons on each move so a
+     * finger can slide across several buttons in one continuous stroke.
+     */
+    @Override
+    public boolean onTouchEvent(MotionEvent ev) {
+        if (swipeOwners.isEmpty()) return false;
+        int action = ev.getActionMasked();
+        if (action == MotionEvent.ACTION_MOVE) {
+            for (int i = 0; i < ev.getPointerCount(); i++) {
+                int pointerId = ev.getPointerId(i);
+                if (!swipeOwners.containsKey(pointerId)) continue;
+                RuntimeButton current = swipeOwners.get(pointerId);
+                RuntimeButton hit = findSwipeableButtonAt(ev.getX(i), ev.getY(i));
+                if (hit != current) {
+                    if (current != null) current.setSwipeLinkedPressed(false);
+                    if (hit != null) hit.setSwipeLinkedPressed(true);
+                    swipeOwners.put(pointerId, hit);
+                }
+            }
+            return true;
+        }
+        if (action == MotionEvent.ACTION_POINTER_UP) {
+            int pointerId = ev.getPointerId(ev.getActionIndex());
+            RuntimeButton owner = swipeOwners.remove(pointerId);
+            if (owner != null) owner.setSwipeLinkedPressed(false);
+            return true;
+        }
+        if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+            for (RuntimeButton owner : swipeOwners.values()) {
+                if (owner != null) owner.setSwipeLinkedPressed(false);
+            }
+            swipeOwners.clear();
+            return true;
+        }
+        return true;
+    }
+
+    /** pointerId -> the swipeable button it just pressed; called from RuntimeButton on ACTION_DOWN. */
+    void onSwipeButtonDown(int pointerId, RuntimeButton button) {
+        swipeOwners.put(pointerId, button);
+    }
+
+    /** Called from RuntimeButton once its own gesture for this pointer ends normally. */
+    void onSwipeButtonRelease(int pointerId) {
+        swipeOwners.remove(pointerId);
+    }
+
+    private RuntimeButton findSwipeableButtonAt(float x, float y) {
+        for (RuntimeButton button : buttons) {
+            if (!button.data.isSwipeable || button.getVisibility() != VISIBLE) continue;
+            if (x >= button.getLeft() && x < button.getRight() &&
+                    y >= button.getTop() && y < button.getBottom()) {
+                return button;
+            }
+        }
+        return null;
     }
 
     private float cameraSensitivity() {
@@ -323,13 +418,13 @@ final class PojavControlOverlay extends ViewGroup {
     }
 
     private void addRuntimeButton(ControlData data) {
-        RuntimeButton button = new RuntimeButton(getContext(), data, host, this::handleSpecialAction);
+        RuntimeButton button = new RuntimeButton(getContext(), data, host, this::handleSpecialAction, this);
         buttons.add(button);
         addView(button);
     }
 
     private void addDrawer(ControlDrawerData data) {
-        RuntimeButton pull = new RuntimeButton(getContext(), data.properties, host, this::handleSpecialAction);
+        RuntimeButton pull = new RuntimeButton(getContext(), data.properties, host, this::handleSpecialAction, this);
         DrawerRuntime runtime = new DrawerRuntime(data, pull);
         pull.setOnClickListener(view -> {
             runtime.open = !runtime.open;
@@ -339,7 +434,7 @@ final class PojavControlOverlay extends ViewGroup {
         addView(pull);
         for (int i = 0; i < data.buttonProperties.size(); i++) {
             RuntimeButton button = new RuntimeButton(getContext(), data.buttonProperties.get(i), host,
-                    this::handleSpecialAction);
+                    this::handleSpecialAction, this);
             runtime.children.add(button);
             buttons.add(button);
             drawerPlacements.put(button, new DrawerPlacement(runtime, i));
@@ -505,6 +600,7 @@ final class PojavControlOverlay extends ViewGroup {
         final ControlData data;
         private final PojavControlsHost host;
         private final SpecialActionHandler specialHandler;
+        private final PojavControlOverlay overlay;
         private boolean pressed;
         private boolean toggled;
         private boolean outside;
@@ -515,11 +611,12 @@ final class PojavControlOverlay extends ViewGroup {
         private float passThroughY;
 
         RuntimeButton(Context context, ControlData data, PojavControlsHost host,
-                      SpecialActionHandler specialHandler) {
+                      SpecialActionHandler specialHandler, PojavControlOverlay overlay) {
             super(context);
             this.data = data;
             this.host = host;
             this.specialHandler = specialHandler;
+            this.overlay = overlay;
             setText(data.name);
             setGravity(Gravity.CENTER);
             setTextColor(Color.WHITE);
@@ -544,6 +641,9 @@ final class PojavControlOverlay extends ViewGroup {
                 rawPassThrough = data.passThruEnabled && host.pojavIsMenuOpen();
                 if (rawPassThrough) sendTouchToGame(event);
                 if (!data.isToggle || virtualMouseButton) press(true);
+                if (data.isSwipeable) {
+                    overlay.onSwipeButtonDown(event.getPointerId(event.getActionIndex()), this);
+                }
                 return true;
             }
             if (action == MotionEvent.ACTION_MOVE) {
@@ -575,6 +675,9 @@ final class PojavControlOverlay extends ViewGroup {
                 if (!outside) performClick();
                 outside = false;
                 rawPassThrough = false;
+                if (data.isSwipeable) {
+                    overlay.onSwipeButtonRelease(event.getPointerId(event.getActionIndex()));
+                }
                 return true;
             }
             if (action == MotionEvent.ACTION_CANCEL) {
@@ -582,6 +685,13 @@ final class PojavControlOverlay extends ViewGroup {
                 if (!data.isToggle || virtualMouseButton) press(false);
                 outside = false;
                 rawPassThrough = false;
+                // Deliberately NOT calling overlay.onSwipeButtonRelease() here: a CANCEL on this
+                // button is exactly what happens the instant the overlay intercepts the gesture
+                // to hand it to another button (see PojavControlOverlay#onInterceptTouchEvent),
+                // and clearing the pointer mapping here would erase the hand-off the overlay is
+                // about to perform for this very event. Any genuinely abandoned mapping (a CANCEL
+                // that isn't part of a swipe hand-off) is swept up defensively on the next
+                // ACTION_DOWN in PojavControlOverlay#onInterceptTouchEvent.
                 return true;
             }
             return true;
@@ -601,6 +711,11 @@ final class PojavControlOverlay extends ViewGroup {
             setScaleX(1f);
             setScaleY(1f);
             rawPassThrough = false;
+        }
+
+        /** Driven by the overlay's cross-button swipe routing (see {@link PojavControlOverlay#onTouchEvent}). */
+        void setSwipeLinkedPressed(boolean down) {
+            if (!data.isToggle || virtualMouseButton) press(down);
         }
 
         void setVirtualMouseState(boolean active) {
@@ -636,12 +751,19 @@ final class PojavControlOverlay extends ViewGroup {
             setActivated(pressed || virtualMouseActive);
         }
 
+        /**
+         * Sends every mapped action slot for this button (up to {@link ControlData#MAX_ACTIONS}).
+         * This lets a single button trigger several actions at once, e.g. right-click + C.
+         */
         private void send(boolean down) {
-            int code = data.primaryKeycode();
-            if (code < 0) specialHandler.handle(code, down);
-            else if (code != KeyMapper.GLFW_KEY_UNKNOWN) {
-                int bedrockCode = KeyMapper.toBedrock(code);
-                if (bedrockCode != KeyMapper.GLFW_KEY_UNKNOWN) host.pojavSendKey(bedrockCode, down);
+            if (data.keycodes == null) return;
+            for (int code : data.keycodes) {
+                if (code == KeyMapper.GLFW_KEY_UNKNOWN) continue;
+                if (code < 0) specialHandler.handle(code, down);
+                else {
+                    int bedrockCode = KeyMapper.toBedrock(code);
+                    if (bedrockCode != KeyMapper.GLFW_KEY_UNKNOWN) host.pojavSendKey(bedrockCode, down);
+                }
             }
         }
 

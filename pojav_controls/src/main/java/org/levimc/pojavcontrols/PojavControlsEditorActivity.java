@@ -268,15 +268,25 @@ public class PojavControlsEditorActivity extends AppCompatActivity {
         form.setPadding(padding, padding, padding, padding);
 
         EditText name = field(form, R.string.pojav_controls_name, target.data.name);
-        Button mapping = new Button(this);
-        mapping.setText(mappingText(target.data.keycodes));
-        mapping.setAllCaps(false);
-        int[] selectedCodes = Arrays.copyOf(target.data.keycodes, 1);
+        int[] selectedCodes = Arrays.copyOf(target.data.keycodes, ControlData.MAX_ACTIONS);
         if (target.type == ControlEditorCanvas.EditorTarget.BUTTON ||
                 target.type == ControlEditorCanvas.EditorTarget.DRAWER_BUTTON) {
+            // Up to MAX_ACTIONS slots so one button can fire several actions at once
+            // (e.g. right-click + C), matching Pojav's multi-action buttons.
             addLabel(form, R.string.pojav_controls_mapping);
-            form.addView(mapping);
-            mapping.setOnClickListener(view -> showMappingDialog(selectedCodes, mapping));
+            LinearLayout mappingRow = new LinearLayout(this);
+            mappingRow.setOrientation(LinearLayout.HORIZONTAL);
+            for (int slot = 0; slot < ControlData.MAX_ACTIONS; slot++) {
+                Button slotButton = new Button(this);
+                slotButton.setAllCaps(false);
+                slotButton.setTextSize(11);
+                slotButton.setText(mappingSlotText(selectedCodes[slot]));
+                int finalSlot = slot;
+                slotButton.setOnClickListener(view -> showMappingDialog(selectedCodes, finalSlot, slotButton));
+                mappingRow.addView(slotButton, new LinearLayout.LayoutParams(
+                        0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            }
+            form.addView(mappingRow);
         }
 
         EditText x = field(form, R.string.pojav_controls_position_x, target.data.dynamicX);
@@ -345,7 +355,7 @@ public class PojavControlsEditorActivity extends AppCompatActivity {
                 .setView(scroll)
                 .setPositiveButton(android.R.string.ok, (ignored, which) -> {
                     target.data.name = name.getText().toString().trim();
-                    target.data.keycodes = Arrays.copyOf(selectedCodes, 1);
+                    target.data.keycodes = Arrays.copyOf(selectedCodes, selectedCodes.length);
                     target.data.dynamicX = x.getText().toString().trim();
                     target.data.dynamicY = y.getText().toString().trim();
                     target.data.width = number(width, target.data.width);
@@ -383,29 +393,27 @@ public class PojavControlsEditorActivity extends AppCompatActivity {
         dialog.show();
     }
 
-    private void showMappingDialog(int[] selectedCodes, Button mapping) {
+    private void showMappingDialog(int[] selectedCodes, int slot, Button mapping) {
         List<KeyMapper.Entry> entries = KeyMapper.entries();
         String[] names = new String[entries.size()];
         int selected = 0;
         for (int i = 0; i < entries.size(); i++) {
             names[i] = entries.get(i).name;
-            if (selectedCodes.length > 0 && selectedCodes[0] == entries.get(i).glfwCode) selected = i;
+            if (selectedCodes[slot] == entries.get(i).glfwCode) selected = i;
         }
         int[] selectedIndex = new int[]{selected};
         new AlertDialog.Builder(this)
-                .setTitle(R.string.pojav_controls_mapping)
+                .setTitle(getString(R.string.pojav_controls_mapping) + " " + (slot + 1))
                 .setSingleChoiceItems(names, selected, (dialog, which) -> selectedIndex[0] = which)
                 .setPositiveButton(android.R.string.ok, (dialog, which) -> {
-                    selectedCodes[0] = entries.get(selectedIndex[0]).glfwCode;
-                    mapping.setText(mappingText(selectedCodes));
+                    selectedCodes[slot] = entries.get(selectedIndex[0]).glfwCode;
+                    mapping.setText(mappingSlotText(selectedCodes[slot]));
                 })
                 .setNegativeButton(android.R.string.cancel, null)
                 .show();
     }
 
-    private String mappingText(int[] keycodes) {
-        int code = keycodes == null || keycodes.length == 0
-                ? KeyMapper.GLFW_KEY_UNKNOWN : keycodes[0];
+    private String mappingSlotText(int code) {
         return code == KeyMapper.GLFW_KEY_UNKNOWN
                 ? getString(R.string.pojav_controls_mapping) : KeyMapper.nameOf(code);
     }
