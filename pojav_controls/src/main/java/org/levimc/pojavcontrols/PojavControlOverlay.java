@@ -743,12 +743,9 @@ final class PojavControlOverlay extends ViewGroup {
          * Sends every mapped action slot for this button (up to {@link ControlData#MAX_ACTIONS}).
          * This lets a single button trigger several actions at once, e.g. right-click + 4.
          * <p>
-         * Slot order alone isn't enough to guarantee delivery order downstream, so on press we
-         * always deliver plain keyboard keys (e.g. the hotbar-select key "4") before special
-         * actions such as mouse buttons, and on release we do the reverse - matching stock
-         * PojavControls, where a modifier-style key is held before the click lands and released
-         * only after the click is. Without this, a "4 + right-click" button could have the click
-         * reach the game before the hotbar slot actually changed.
+         * Real keyboard keys are always delivered before special actions (mouse buttons, etc.)
+         * on press, and after them on release - matching stock PojavControls, where a modifier
+         * -style key is held before the click lands and released only after the click is.
          */
         private void send(boolean down) {
             if (data.keycodes == null) return;
@@ -765,11 +762,32 @@ final class PojavControlOverlay extends ViewGroup {
         private void sendCode(int code, boolean down, boolean special) {
             if (code == KeyMapper.GLFW_KEY_UNKNOWN) return;
             if ((code < 0) != special) return;
-            if (special) specialHandler.handle(code, down);
-            else {
-                int bedrockCode = KeyMapper.toBedrock(code);
-                if (bedrockCode != KeyMapper.GLFW_KEY_UNKNOWN) host.pojavSendKey(bedrockCode, down);
+            if (special) {
+                specialHandler.handle(code, down);
+                return;
             }
+            int bedrockCode = KeyMapper.toBedrock(code);
+            if (bedrockCode == KeyMapper.GLFW_KEY_UNKNOWN) return;
+            if (isHotbarSelectKey(code)) {
+                // The hotbar-select keys (0-9) only register on Bedrock once the key is
+                // released - holding them down for as long as the button is held (like every
+                // other key here) means the slot switch doesn't actually happen until the
+                // finger lifts. So instead of holding it, pulse a full press+release the
+                // instant the button goes down; that's how stock PojavControls does it, and
+                // it's what lets a "4 + right-click" button switch slots immediately instead
+                // of only on release.
+                if (down) {
+                    host.pojavSendKey(bedrockCode, true);
+                    host.pojavSendKey(bedrockCode, false);
+                }
+                return;
+            }
+            host.pojavSendKey(bedrockCode, down);
+        }
+
+        /** True for the digit keys (0-9) used to select a hotbar slot. */
+        private boolean isHotbarSelectKey(int glfwCode) {
+            return glfwCode >= '0' && glfwCode <= '9';
         }
 
         private void applyStyle() {
