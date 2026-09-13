@@ -1,5 +1,6 @@
 package org.levimc.launcher.ui.activities;
 
+import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
@@ -7,6 +8,7 @@ import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.AsyncTask;
+import android.os.Build;
 import android.os.Bundle;
 import android.util.Base64;
 import android.view.Gravity;
@@ -29,6 +31,7 @@ import com.google.android.material.switchmaterial.SwitchMaterial;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.core.content.ContextCompat;
 
 import org.levimc.launcher.R;
 import org.levimc.launcher.core.crash.CrashReporter;
@@ -52,6 +55,7 @@ public class SettingsActivity extends BaseActivity {
     private PermissionsHandler permissionsHandler;
     private ActivityResultLauncher<Intent> permissionResultLauncher;
     private ActivityResultLauncher<Intent> bgImagePickerLauncher;
+    private ActivityResultLauncher<String> notificationPermissionLauncher;
     private int updateButtonTapCount = 0;
     private long lastUpdateButtonTapTime = 0;
     private static final int EASTER_EGG_TAP_COUNT = 3;
@@ -126,6 +130,21 @@ public class SettingsActivity extends BaseActivity {
                 }
         );
 
+        // On Android 13+, a denied/never-granted POST_NOTIFICATIONS permission silently
+        // suppresses the foreground service's notification. The service can still lose its
+        // elevated priority in that state, which is why enabling background mode alone doesn't
+        // reliably keep the game connected - we need to actually request the permission here.
+        notificationPermissionLauncher = registerForActivityResult(
+                new ActivityResultContracts.RequestPermission(),
+                granted -> {
+                    if (!granted) {
+                        Toast.makeText(this,
+                                R.string.foreground_service_notification_permission_denied,
+                                Toast.LENGTH_LONG).show();
+                    }
+                }
+        );
+
         initTabs();
         setupBasicSection();
         setupPersonalizeSection();
@@ -144,6 +163,21 @@ public class SettingsActivity extends BaseActivity {
     protected void onSaveInstanceState(Bundle outState) {
         super.onSaveInstanceState(outState);
         outState.putInt(KEY_SELECTED_TAB, selectedTabIndex);
+    }
+
+    /**
+     * Prompts for POST_NOTIFICATIONS on Android 13+ if it hasn't been granted yet. Without it,
+     * the background-mode foreground service's notification is silently suppressed, which on
+     * some Android versions also means it fails to hold onto foreground process priority - so
+     * the game can still lose its connection when minimized even with the toggle switched on.
+     */
+    private void requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return;
+        boolean granted = ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                == PackageManager.PERMISSION_GRANTED;
+        if (!granted) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS);
+        }
     }
 
     private void initTabs() {
@@ -289,7 +323,13 @@ public class SettingsActivity extends BaseActivity {
 
         SwitchMaterial switchForegroundService = findViewById(R.id.switch_foreground_service);
         switchForegroundService.setChecked(fs.isForegroundServiceEnabled());
-        switchForegroundService.setOnCheckedChangeListener((btn, checked) -> fs.setForegroundServiceEnabled(checked));
+        switchForegroundService.setOnCheckedChangeListener((btn, checked) -> {
+            fs.setForegroundServiceEnabled(checked);
+            // The service itself only runs while a Minecraft session is active (started/stopped
+            // from MinecraftActivity), so just make sure the notification permission is granted
+            // now, while the user's attention is on this toggle.
+            if (checked) requestNotificationPermissionIfNeeded();
+        });
 
         SwitchMaterial switchCrashUpload = findViewById(R.id.switch_crash_upload);
         switchCrashUpload.setChecked(fs.isCrashUploadEnabled());

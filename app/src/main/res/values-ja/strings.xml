@@ -1031,6 +1031,7 @@ LeviLauncher を続行するには移行を完了する必要があります。<
     <string name="foreground_service_channel">Minecraft バックグラウンド保護</string>
     <string name="foreground_service_notification_title">Minecraft を動作状態に保っています</string>
     <string name="foreground_service_notification_text">Minecraft のバックグラウンドモードが有効です。現在のセッションで CPU とネットワークアクセスを利用できる状態に保っています。</string>
+    <string name="foreground_service_notification_permission_denied">バックグラウンドモードを維持するには通知の許可が必要です。設定 → アプリ → 通知 から許可してください。</string>
     <string name="mod_menu_compact">コンパクト Mod メニュー</string>
     <string name="mod_menu_compact_desc">密度の高いモジュール一覧とコンパクトなフィルターを備えた小さいメニューを使用します</string>
     <string name="mod_config_gyro_sensitivity_multiplier" formatted="false">感度倍率 (100% = 1x)</string>

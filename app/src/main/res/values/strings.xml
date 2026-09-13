@@ -671,6 +671,7 @@ Migration must complete before LeviLauncher can continue.</string>
     <string name="foreground_service_channel">Minecraft background protection</string>
     <string name="foreground_service_notification_title">Minecraft is being kept active</string>
     <string name="foreground_service_notification_text">Minecraft background mode is active. CPU and network access are being kept available for the current session.</string>
+    <string name="foreground_service_notification_permission_denied">Background mode needs notification permission to stay active. Enable it in system Settings \u2192 Apps \u2192 Notifications.</string>
     <string name="logcat_live">Logcat: <b>live</b></string>
     <string name="logcat_paused">Logcat: paused</string>
     <!-- Logcat Overlay i18n -->
