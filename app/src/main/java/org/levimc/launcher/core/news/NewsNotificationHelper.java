@@ -13,8 +13,6 @@ import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
 
-import com.google.firebase.messaging.FirebaseMessaging;
-
 import org.levimc.launcher.R;
 import org.levimc.launcher.ui.activities.NewsActivity;
 
@@ -25,12 +23,11 @@ public final class NewsNotificationHelper {
     private NewsNotificationHelper() {
     }
 
+    // Firebase Cloud Messaging is not available in this build, so this only
+    // sets up the local notification channel. News are still fetched via
+    // NewsRepository's own polling/refresh path.
     public static void initialize(Context context) {
         createChannel(context);
-        try {
-            FirebaseMessaging.getInstance().subscribeToTopic(TOPIC);
-        } catch (Exception ignored) {
-        }
     }
 
     public static void show(Context context, String id, String title, String body, String url) {

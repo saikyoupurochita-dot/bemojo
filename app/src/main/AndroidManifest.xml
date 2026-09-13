@@ -97,15 +97,6 @@
                 android:value="Keeps the user-started Minecraft runtime at foreground-process priority while the game activity is backgrounded." />
         </service>
 
-
-        <service
-            android:name="org.levimc.launcher.core.news.LauncherNewsMessagingService"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="com.google.firebase.MESSAGING_EVENT" />
-            </intent-filter>
-        </service>
-
         <activity
             android:name="org.levimc.launcher.ui.activities.NewsActivity"
             android:exported="false"
