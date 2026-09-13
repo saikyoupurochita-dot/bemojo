@@ -741,17 +741,34 @@ final class PojavControlOverlay extends ViewGroup {
 
         /**
          * Sends every mapped action slot for this button (up to {@link ControlData#MAX_ACTIONS}).
-         * This lets a single button trigger several actions at once, e.g. right-click + C.
+         * This lets a single button trigger several actions at once, e.g. right-click + 4.
+         * <p>
+         * Slot order alone isn't enough to guarantee delivery order downstream, so on press we
+         * always deliver plain keyboard keys (e.g. the hotbar-select key "4") before special
+         * actions such as mouse buttons, and on release we do the reverse - matching stock
+         * PojavControls, where a modifier-style key is held before the click lands and released
+         * only after the click is. Without this, a "4 + right-click" button could have the click
+         * reach the game before the hotbar slot actually changed.
          */
         private void send(boolean down) {
             if (data.keycodes == null) return;
-            for (int code : data.keycodes) {
-                if (code == KeyMapper.GLFW_KEY_UNKNOWN) continue;
-                if (code < 0) specialHandler.handle(code, down);
-                else {
-                    int bedrockCode = KeyMapper.toBedrock(code);
-                    if (bedrockCode != KeyMapper.GLFW_KEY_UNKNOWN) host.pojavSendKey(bedrockCode, down);
-                }
+            if (down) {
+                for (int code : data.keycodes) sendCode(code, true, false);
+                for (int code : data.keycodes) sendCode(code, true, true);
+            } else {
+                for (int code : data.keycodes) sendCode(code, false, true);
+                for (int code : data.keycodes) sendCode(code, false, false);
+            }
+        }
+
+        /** Sends a single action slot's code if it matches the requested special/plain pass. */
+        private void sendCode(int code, boolean down, boolean special) {
+            if (code == KeyMapper.GLFW_KEY_UNKNOWN) return;
+            if ((code < 0) != special) return;
+            if (special) specialHandler.handle(code, down);
+            else {
+                int bedrockCode = KeyMapper.toBedrock(code);
+                if (bedrockCode != KeyMapper.GLFW_KEY_UNKNOWN) host.pojavSendKey(bedrockCode, down);
             }
         }
 
